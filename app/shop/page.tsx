@@ -222,7 +222,7 @@ export default function ShopPage() {
             </CardHeader>
             <CardContent>
               <div className="bg-orange-50 rounded-lg p-4 mb-4">
-                <div className="text-xl font-bold mb-2">25 tokens</div>
+                <div className="text-xl font-bold mb-2 text-black">25 tokens</div>
                 <div className="text-sm text-muted-foreground">Collect all the OG cooks!</div>
               </div>
 
