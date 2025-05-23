@@ -235,7 +235,7 @@ export default function Home() {
 
         {userData.isAdmin && (
           <Link href="/admin" className="block">
-            <Card className="hover:shadow-md transition-all duration-200 hover:scale-105 border-purple-200 hover:border-purple-400 bg-gradient-to-br from-card to-purple-50">
+            <Card className="hover:shadow-md transition-all duration-200 hover:scale-105 border-purple-200 hover:border-purple-400 bg-white">
               <CardHeader className="text-center pb-2 px-6 py-4">
                 <div className="flex items-center gap-3">
                   <div className="bg-purple-100 w-10 h-10 rounded-full flex items-center justify-center">
