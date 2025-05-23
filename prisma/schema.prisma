@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  username  String   @unique
+  email     String   @unique
+  password  String
+  tokens    Int      @default(100)
+  lastClaim DateTime?
+  isAdmin   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  inventory Cook[]
+  messages  Message[]
+  tradesFrom Trade[] @relation("TradeFromUser")
+  tradesTo   Trade[] @relation("TradeToUser")
+}
+
+model Cook {
+  id        String   @id @default(cuid())
+  name      String
+  rarity    String
+  sellValue Int
+  icon      String?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  createdAt DateTime @default(now())
+  tradesFrom Trade[] @relation("TradeFromCook")
+  tradesTo   Trade[] @relation("TradeToCook")
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  content   String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model Trade {
+  id         String   @id @default(cuid())
+  fromUserId String
+  toUserId   String
+  fromCookId String
+  toCookId   String
+  status     String   @default("pending") // pending, accepted, declined
+  fromUser   User     @relation("TradeFromUser", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser     User     @relation("TradeToUser", fields: [toUserId], references: [id], onDelete: Cascade)
+  fromCook   Cook     @relation("TradeFromCook", fields: [fromCookId], references: [id], onDelete: Cascade)
+  toCook     Cook     @relation("TradeToCook", fields: [toCookId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
