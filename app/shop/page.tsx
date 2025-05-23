@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Package, ArrowLeft, Sparkles } from "lucide-react"
+import { Package, ArrowLeft, Sparkles, AlertCircle } from "lucide-react"
 import Link from "next/link"
 import { getUserData, openPack } from "@/lib/user-actions"
 import { useSession } from "next-auth/react"
@@ -24,9 +24,14 @@ export default function ShopPage() {
       if (session?.user?.username) {
         try {
           const data = await getUserData(session.user.username)
-          setUserData(data)
+          if (data.error) {
+            setError(data.error)
+          } else {
+            setUserData(data)
+          }
           setIsLoading(false)
         } catch (error) {
+          console.error("Failed to fetch user data:", error)
           setError("Failed to load user data")
           setIsLoading(false)
         }
@@ -37,22 +42,50 @@ export default function ShopPage() {
   }, [session])
 
   const handleOpenPack = async () => {
+    if (!session?.user?.username) {
+      setError("Please log in to open packs")
+      return
+    }
+
+    if (userData.tokens < 25) {
+      setError("Not enough tokens to open a pack")
+      return
+    }
+
     setOpeningPack(true)
+    setError("")
+
     try {
       const result = await openPack(session.user.username, "og")
+
       if (result.error) {
         setError(result.error)
         setOpeningPack(false)
         return
       }
 
+      if (!result.success) {
+        setError("Failed to open pack. Please try again.")
+        setOpeningPack(false)
+        return
+      }
+
+      // Success - show the result
       setPackResult(result)
 
-      // Update user data
-      const updatedData = await getUserData(session.user.username)
-      setUserData(updatedData)
+      // Update user data to reflect new token balance
+      try {
+        const updatedData = await getUserData(session.user.username)
+        if (updatedData && !updatedData.error) {
+          setUserData(updatedData)
+        }
+      } catch (updateError) {
+        console.error("Failed to update user data after pack opening:", updateError)
+        // Don't show error to user as pack opening was successful
+      }
     } catch (error) {
-      setError("Failed to open pack. Please try again.")
+      console.error("Pack opening error:", error)
+      setError("An unexpected error occurred. Please try again.")
     } finally {
       setOpeningPack(false)
     }
@@ -79,10 +112,51 @@ export default function ShopPage() {
     }
   }
 
+  const clearError = () => {
+    setError("")
+  }
+
+  const clearResult = () => {
+    setPackResult(null)
+    setError("")
+  }
+
   if (isLoading) {
     return (
       <div className="container max-w-4xl mx-auto py-12 px-4 flex items-center justify-center">
-        <div className="text-center">Loading...</div>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
+          <p>Loading shop...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!session) {
+    return (
+      <div className="container max-w-4xl mx-auto py-12 px-4 flex items-center justify-center">
+        <Card>
+          <CardContent className="text-center py-8">
+            <p className="mb-4">Please log in to access the shop</p>
+            <Button asChild>
+              <Link href="/login">Login</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  if (!userData) {
+    return (
+      <div className="container max-w-4xl mx-auto py-12 px-4 flex items-center justify-center">
+        <Card>
+          <CardContent className="text-center py-8">
+            <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <p className="mb-4">Failed to load user data</p>
+            <Button onClick={() => window.location.reload()}>Retry</Button>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -98,7 +172,17 @@ export default function ShopPage() {
         </div>
       </div>
 
-      {error && <div className="p-3 mb-6 text-sm bg-red-50 border border-red-200 text-red-600 rounded-md">{error}</div>}
+      {error && (
+        <div className="p-3 mb-6 text-sm bg-red-50 border border-red-200 text-red-600 rounded-md flex items-center justify-between">
+          <div className="flex items-center">
+            <AlertCircle className="h-4 w-4 mr-2" />
+            {error}
+          </div>
+          <Button variant="ghost" size="sm" onClick={clearError}>
+            ×
+          </Button>
+        </div>
+      )}
 
       {packResult ? (
         <Card className="shadow-lg mb-8 overflow-hidden">
@@ -123,7 +207,7 @@ export default function ShopPage() {
             </div>
           </CardContent>
           <CardFooter className="flex justify-center gap-4">
-            <Button onClick={() => setPackResult(null)}>Open Another Pack</Button>
+            <Button onClick={clearResult}>Open Another Pack</Button>
             <Button variant="outline" onClick={() => router.push("/inventory")}>
               View Inventory
             </Button>
@@ -179,7 +263,14 @@ export default function ShopPage() {
                 onClick={handleOpenPack}
                 disabled={userData.tokens < 25 || openingPack}
               >
-                {openingPack ? "Opening..." : "Open Pack (25 tokens)"}
+                {openingPack ? (
+                  <div className="flex items-center">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Opening...
+                  </div>
+                ) : (
+                  "Open Pack (25 tokens)"
+                )}
               </Button>
             </CardFooter>
           </Card>

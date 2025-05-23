@@ -10,7 +10,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Shield, User, Coins, Database, MessageSquare } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Shield, User, Coins, Database, MessageSquare, Ban, UserX } from "lucide-react"
 import {
   getAllUsers,
   updateUserTokens,
@@ -21,6 +29,8 @@ import {
   clearAllMessages,
   deleteUser,
   authenticateAdminUser,
+  banUser,
+  unbanUser,
 } from "@/lib/admin-actions"
 import { getMessageCount } from "@/lib/chat-actions"
 
@@ -37,21 +47,29 @@ export default function AdminPage() {
   const [success, setSuccess] = useState("")
   const [messageCount, setMessageCount] = useState(0)
   const [authenticatedUser, setAuthenticatedUser] = useState(null)
+  const [isMasterAdmin, setIsMasterAdmin] = useState(false)
 
   // Form states
   const [selectedUser, setSelectedUser] = useState("")
   const [tokenAmount, setTokenAmount] = useState("")
   const [adminUsername, setAdminUsername] = useState("")
   const [sqlQuery, setSqlQuery] = useState("")
-  const [sqlResult, setSqlResult] = useState(null)
+  const [sqlResults, setSqlResults] = useState(null)
   const [deleteCount, setDeleteCount] = useState(100)
+
+  // Dialog states
+  const [masterPasswordDialog, setMasterPasswordDialog] = useState(false)
+  const [masterPassword, setMasterPassword] = useState("")
+  const [pendingAction, setPendingAction] = useState(null)
 
   useEffect(() => {
     // Check if admin is authenticated in session storage
     const storedAuth = sessionStorage.getItem("adminAuth")
     const storedUser = sessionStorage.getItem("adminUser")
+    const storedMaster = sessionStorage.getItem("masterAdmin")
     if (storedAuth === "true") {
       setIsAuthenticated(true)
+      setIsMasterAdmin(storedMaster === "true")
       if (storedUser) {
         setAuthenticatedUser(JSON.parse(storedUser))
       }
@@ -91,7 +109,9 @@ export default function AdminPage() {
         // Check if password matches the one in environment variables
         if (password === process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
           setIsAuthenticated(true)
+          setIsMasterAdmin(true)
           sessionStorage.setItem("adminAuth", "true")
+          sessionStorage.setItem("masterAdmin", "true")
           await fetchUsers()
           await fetchMessageCount()
         } else {
@@ -104,6 +124,7 @@ export default function AdminPage() {
           setError(result.error)
         } else {
           setIsAuthenticated(true)
+          setIsMasterAdmin(false)
           setAuthenticatedUser(result.user)
           sessionStorage.setItem("adminAuth", "true")
           sessionStorage.setItem("adminUser", JSON.stringify(result.user))
@@ -115,6 +136,49 @@ export default function AdminPage() {
       setError("Authentication failed")
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleMasterPasswordSubmit = async () => {
+    if (!pendingAction) return
+
+    setIsLoading(true)
+    setError("")
+    setSuccess("")
+
+    try {
+      const result = await pendingAction.action(pendingAction.params, masterPassword)
+      if (result.error) {
+        setError(result.error)
+      } else {
+        setSuccess(pendingAction.successMessage)
+        await fetchUsers()
+      }
+    } catch (error) {
+      setError("Action failed")
+    } finally {
+      setIsLoading(false)
+      setMasterPasswordDialog(false)
+      setMasterPassword("")
+      setPendingAction(null)
+    }
+  }
+
+  const requireMasterPassword = (action, params, successMessage) => {
+    if (isMasterAdmin) {
+      // If already master admin, execute directly
+      action(params, process.env.NEXT_PUBLIC_ADMIN_PASSWORD).then((result) => {
+        if (result.error) {
+          setError(result.error)
+        } else {
+          setSuccess(successMessage)
+          fetchUsers()
+        }
+      })
+    } else {
+      // Require master password
+      setPendingAction({ action, params, successMessage })
+      setMasterPasswordDialog(true)
     }
   }
 
@@ -175,36 +239,12 @@ export default function AdminPage() {
     }
   }
 
-  const handleRemoveAdmin = async (username) => {
-    if (!window.confirm(`Are you sure you want to remove admin access from ${username}?`)) {
-      return
-    }
-
-    setIsLoading(true)
-    setError("")
-    setSuccess("")
-
-    try {
-      const result = await removeAdminAccess(username)
-      if (result.error) {
-        setError(result.error)
-      } else {
-        setSuccess(`Successfully removed admin access from ${username}`)
-        await fetchUsers()
-      }
-    } catch (error) {
-      setError("Failed to remove admin access")
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
   const handleExecuteSQL = async (e) => {
     e.preventDefault()
     setIsLoading(true)
     setError("")
     setSuccess("")
-    setSqlResult(null)
+    setSqlResults(null)
 
     try {
       if (!sqlQuery.trim()) {
@@ -218,7 +258,7 @@ export default function AdminPage() {
         setError(result.error)
       } else {
         setSuccess("SQL executed successfully")
-        setSqlResult(result.result)
+        setSqlResults(result.results)
         await fetchUsers()
         await fetchMessageCount()
       }
@@ -273,12 +313,8 @@ export default function AdminPage() {
     }
   }
 
-  const handleDeleteUser = async (userId, userName) => {
-    if (
-      !window.confirm(
-        `Are you sure you want to delete user "${userName}"? This will permanently delete all their data including cooks, messages, and trades. This action cannot be undone.`,
-      )
-    ) {
+  const handleBanUser = async (username) => {
+    if (!window.confirm(`Are you sure you want to ban user "${username}"?`)) {
       return
     }
 
@@ -287,15 +323,35 @@ export default function AdminPage() {
     setSuccess("")
 
     try {
-      const result = await deleteUser(userId)
+      const result = await banUser(username)
       if (result.error) {
         setError(result.error)
       } else {
-        setSuccess(`Successfully deleted user "${userName}"`)
+        setSuccess(`Successfully banned user "${username}"`)
         await fetchUsers()
       }
     } catch (error) {
-      setError("Failed to delete user")
+      setError("Failed to ban user")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleUnbanUser = async (username) => {
+    setIsLoading(true)
+    setError("")
+    setSuccess("")
+
+    try {
+      const result = await unbanUser(username)
+      if (result.error) {
+        setError(result.error)
+      } else {
+        setSuccess(`Successfully unbanned user "${username}"`)
+        await fetchUsers()
+      }
+    } catch (error) {
+      setError("Failed to unban user")
     } finally {
       setIsLoading(false)
     }
@@ -304,8 +360,10 @@ export default function AdminPage() {
   const handleLogout = () => {
     setIsAuthenticated(false)
     setAuthenticatedUser(null)
+    setIsMasterAdmin(false)
     sessionStorage.removeItem("adminAuth")
     sessionStorage.removeItem("adminUser")
+    sessionStorage.removeItem("masterAdmin")
     setPassword("")
     setUsername("")
     setUserPassword("")
@@ -333,7 +391,7 @@ export default function AdminPage() {
                 <RadioGroup value={authMethod} onValueChange={setAuthMethod}>
                   <div className="flex items-center space-x-2">
                     <RadioGroupItem value="password" id="password" />
-                    <Label htmlFor="password">Admin Password</Label>
+                    <Label htmlFor="password">Master Admin Password</Label>
                   </div>
                   <div className="flex items-center space-x-2">
                     <RadioGroupItem value="user" id="user" />
@@ -344,7 +402,7 @@ export default function AdminPage() {
 
               {authMethod === "password" ? (
                 <div className="space-y-2">
-                  <Label htmlFor="adminPassword">Admin Password</Label>
+                  <Label htmlFor="adminPassword">Master Admin Password</Label>
                   <Input
                     id="adminPassword"
                     type="password"
@@ -394,7 +452,14 @@ export default function AdminPage() {
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-3xl font-bold">Cook'it Admin Panel</h1>
-          {authenticatedUser && <p className="text-sm text-muted-foreground">Logged in as: {authenticatedUser.name}</p>}
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            {authenticatedUser && <span>Logged in as: {authenticatedUser.name}</span>}
+            {isMasterAdmin && (
+              <span className="bg-purple-100 text-purple-800 px-2 py-1 rounded-full text-xs font-medium">
+                Master Admin
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => router.push("/")}>
@@ -454,7 +519,7 @@ export default function AdminPage() {
                       <TableHead>Tokens</TableHead>
                       <TableHead>Cooks</TableHead>
                       <TableHead>Last Claim</TableHead>
-                      <TableHead>Role</TableHead>
+                      <TableHead>Status</TableHead>
                       <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -467,23 +532,36 @@ export default function AdminPage() {
                         <TableCell>{user.cookCount}</TableCell>
                         <TableCell>{user.lastClaim || "Never"}</TableCell>
                         <TableCell>
-                          {user.isAdmin ? (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                              Admin
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                              User
-                            </span>
-                          )}
+                          <div className="flex flex-col gap-1">
+                            {user.isAdmin && (
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                Admin
+                              </span>
+                            )}
+                            {user.isBanned ? (
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                Banned
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                Active
+                              </span>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap gap-2">
                             {user.isAdmin ? (
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handleRemoveAdmin(user.username)}
+                                onClick={() =>
+                                  requireMasterPassword(
+                                    removeAdminAccess,
+                                    user.username,
+                                    `Removed admin access from ${user.username}`,
+                                  )
+                                }
                                 disabled={isLoading}
                               >
                                 Remove Admin
@@ -498,10 +576,31 @@ export default function AdminPage() {
                                 Make Admin
                               </Button>
                             )}
+                            {user.isBanned ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleUnbanUser(user.username)}
+                                disabled={isLoading}
+                              >
+                                <UserX className="h-4 w-4 mr-1" />
+                                Unban
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleBanUser(user.username)}
+                                disabled={isLoading}
+                              >
+                                <Ban className="h-4 w-4 mr-1" />
+                                Ban
+                              </Button>
+                            )}
                             <Button
                               variant="destructive"
                               size="sm"
-                              onClick={() => handleDeleteUser(user.id, user.name)}
+                              onClick={() => requireMasterPassword(deleteUser, user.id, `Deleted user ${user.name}`)}
                               disabled={isLoading}
                             >
                               Delete
@@ -621,12 +720,47 @@ export default function AdminPage() {
                   </p>
                 </div>
 
-                {sqlResult && (
-                  <div className="mt-4">
-                    <h3 className="text-sm font-medium mb-2">Result:</h3>
-                    <div className="bg-muted p-4 rounded-md overflow-auto max-h-64">
-                      <pre className="text-xs">{JSON.stringify(sqlResult, null, 2)}</pre>
-                    </div>
+                {sqlResults && (
+                  <div className="mt-4 space-y-4">
+                    <h3 className="text-sm font-medium">Query Results:</h3>
+                    {sqlResults.map((result, index) => (
+                      <div key={index} className="border rounded-md">
+                        <div className="bg-muted p-2 border-b">
+                          <div className="text-xs font-mono">{result.query}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {result.rowCount} row{result.rowCount !== 1 ? "s" : ""} affected
+                          </div>
+                        </div>
+                        <div className="p-4 overflow-auto max-h-64">
+                          {Array.isArray(result.result) && result.result.length > 0 ? (
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  {Object.keys(result.result[0]).map((key) => (
+                                    <TableHead key={key} className="text-xs">
+                                      {key}
+                                    </TableHead>
+                                  ))}
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {result.result.slice(0, 50).map((row, rowIndex) => (
+                                  <TableRow key={rowIndex}>
+                                    {Object.values(row).map((value, cellIndex) => (
+                                      <TableCell key={cellIndex} className="text-xs">
+                                        {value !== null ? String(value) : "NULL"}
+                                      </TableCell>
+                                    ))}
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          ) : (
+                            <pre className="text-xs">{JSON.stringify(result.result, null, 2)}</pre>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </CardContent>
@@ -693,6 +827,36 @@ export default function AdminPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Master Password Dialog */}
+      <Dialog open={masterPasswordDialog} onOpenChange={setMasterPasswordDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Master Admin Password Required</DialogTitle>
+            <DialogDescription>This action requires the master admin password to proceed.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="masterPassword">Master Admin Password</Label>
+              <Input
+                id="masterPassword"
+                type="password"
+                value={masterPassword}
+                onChange={(e) => setMasterPassword(e.target.value)}
+                placeholder="Enter master admin password"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMasterPasswordDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleMasterPasswordSubmit} disabled={!masterPassword || isLoading}>
+              {isLoading ? "Processing..." : "Confirm"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

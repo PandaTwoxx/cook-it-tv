@@ -34,6 +34,11 @@ const handler = NextAuth({
 
           const user = users[0]
 
+          // Check if user is banned
+          if (user.isBanned) {
+            throw new Error("Your account has been banned. Please contact support.")
+          }
+
           // Verify password
           const isValid = await bcrypt.compare(credentials.password, user.password)
           if (!isValid) {

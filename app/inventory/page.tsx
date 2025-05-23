@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, ChefHat, Coins } from "lucide-react"
 import Link from "next/link"
 import { getUserData, sellCook } from "@/lib/user-actions"
@@ -135,8 +136,11 @@ export default function InventoryPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
           {userData.inventory.map((cook) => (
-            <Card key={cook.id} className="overflow-hidden">
+            <Card key={cook.id} className="overflow-hidden relative">
               <div className={`h-2 ${getRarityBgColor(cook.rarity)}`}></div>
+              {cook.count > 1 && (
+                <Badge className="absolute top-3 right-3 bg-primary text-primary-foreground">x{cook.count}</Badge>
+              )}
               <CardHeader className="pb-2">
                 <CardTitle className={`text-xl ${getRarityColor(cook.rarity)}`}>{cook.name}</CardTitle>
                 <CardDescription>{cook.rarity} Rarity</CardDescription>
@@ -152,8 +156,13 @@ export default function InventoryPage() {
                 <div className="text-sm text-center">
                   <div className="flex items-center justify-center gap-1 font-medium">
                     <Coins className="h-4 w-4" />
-                    <span>Sell value: {cook.sellValue} tokens</span>
+                    <span>Sell value: {cook.sellValue} tokens each</span>
                   </div>
+                  {cook.count > 1 && (
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Total value: {cook.sellValue * cook.count} tokens
+                    </div>
+                  )}
                 </div>
               </CardContent>
               <CardFooter>
@@ -163,7 +172,9 @@ export default function InventoryPage() {
                   onClick={() => handleSellCook(cook.id)}
                   disabled={sellingCook === cook.id}
                 >
-                  {sellingCook === cook.id ? "Selling..." : `Sell for ${cook.sellValue} tokens`}
+                  {sellingCook === cook.id
+                    ? "Selling..."
+                    : `Sell ${cook.count > 1 ? "one " : ""}for ${cook.sellValue} tokens`}
                 </Button>
               </CardFooter>
             </Card>

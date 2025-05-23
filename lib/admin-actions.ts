@@ -14,7 +14,7 @@ export async function getAllUsers() {
         COUNT(c.id) as "cookCount"
       FROM "User" u
       LEFT JOIN "Cook" c ON u.id = c."userId"
-      GROUP BY u.id, u.name, u.username, u.tokens, u."lastClaim", u."isAdmin", u."createdAt", u."updatedAt"
+      GROUP BY u.id, u.name, u.username, u.tokens, u."lastClaim", u."isAdmin", u."isBanned", u."createdAt", u."updatedAt"
       ORDER BY u."createdAt" DESC
     `
 
@@ -25,6 +25,7 @@ export async function getAllUsers() {
       tokens: user.tokens,
       lastClaim: user.lastClaim ? new Date(user.lastClaim).toLocaleString() : null,
       isAdmin: user.isAdmin,
+      isBanned: user.isBanned || false,
       cookCount: Number.parseInt(user.cookCount),
     }))
   } catch (error) {
@@ -89,9 +90,14 @@ export async function grantAdminAccess(username) {
   }
 }
 
-// Remove admin access from a user
-export async function removeAdminAccess(username) {
+// Remove admin access from a user (requires master admin password)
+export async function removeAdminAccess(username, masterPassword) {
   try {
+    // Check master password
+    if (masterPassword !== process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
+      return { error: "Invalid master admin password" }
+    }
+
     const users = await sql`
       SELECT * FROM "User" WHERE username = ${username}
     `
@@ -113,11 +119,73 @@ export async function removeAdminAccess(username) {
   }
 }
 
+// Ban a user
+export async function banUser(username) {
+  try {
+    const users = await sql`
+      SELECT * FROM "User" WHERE username = ${username}
+    `
+
+    if (users.length === 0) {
+      return { error: "User not found" }
+    }
+
+    await sql`
+      UPDATE "User" 
+      SET "isBanned" = true, "updatedAt" = NOW()
+      WHERE username = ${username}
+    `
+
+    return { success: true }
+  } catch (error) {
+    console.error("Ban user error:", error)
+    return { error: "Failed to ban user" }
+  }
+}
+
+// Unban a user
+export async function unbanUser(username) {
+  try {
+    const users = await sql`
+      SELECT * FROM "User" WHERE username = ${username}
+    `
+
+    if (users.length === 0) {
+      return { error: "User not found" }
+    }
+
+    await sql`
+      UPDATE "User" 
+      SET "isBanned" = false, "updatedAt" = NOW()
+      WHERE username = ${username}
+    `
+
+    return { success: true }
+  } catch (error) {
+    console.error("Unban user error:", error)
+    return { error: "Failed to unban user" }
+  }
+}
+
 // Execute custom SQL query
 export async function executeSQL(query) {
   try {
-    const result = await sql.unsafe(query)
-    return { success: true, result }
+    // Split query by semicolons to handle multiple statements
+    const queries = query.split(";").filter((q) => q.trim())
+    const results = []
+
+    for (const singleQuery of queries) {
+      if (singleQuery.trim()) {
+        const result = await sql.unsafe(singleQuery.trim())
+        results.push({
+          query: singleQuery.trim(),
+          result: result,
+          rowCount: Array.isArray(result) ? result.length : 1,
+        })
+      }
+    }
+
+    return { success: true, results }
   } catch (error) {
     console.error("SQL execution error:", error)
     return { error: error.message || "Failed to execute SQL" }
@@ -157,9 +225,14 @@ export async function clearAllMessages() {
   }
 }
 
-// Delete a user and all their data
-export async function deleteUser(userId) {
+// Delete a user and all their data (requires master admin password)
+export async function deleteUser(userId, masterPassword) {
   try {
+    // Check master password
+    if (masterPassword !== process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
+      return { error: "Invalid master admin password" }
+    }
+
     // First delete all user's cooks
     await sql`DELETE FROM "Cook" WHERE "userId" = ${userId}`
 
@@ -193,6 +266,11 @@ export async function authenticateAdminUser(username, password) {
     }
 
     const user = users[0]
+
+    // Check if user is banned
+    if (user.isBanned) {
+      return { error: "This admin account has been banned" }
+    }
 
     // Verify password
     const isValid = await bcrypt.compare(password, user.password)

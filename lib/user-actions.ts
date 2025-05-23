@@ -77,9 +77,34 @@ export async function getUserData(username) {
 
     const user = users[0]
 
+    // Check if user is banned
+    if (user.isBanned) {
+      return { error: "Your account has been banned. Please contact support." }
+    }
+
     const inventory = await sql`
       SELECT * FROM "Cook" WHERE "userId" = ${user.id}
     `
+
+    // Group inventory by cook name and count duplicates
+    const groupedInventory = inventory.reduce((acc, item) => {
+      const existing = acc.find((cook) => cook.name === item.name && cook.rarity === item.rarity)
+      if (existing) {
+        existing.count += 1
+        existing.ids.push(item.id)
+      } else {
+        acc.push({
+          id: item.id,
+          ids: [item.id],
+          name: item.name,
+          rarity: item.rarity,
+          sellValue: item.sellValue,
+          icon: item.icon,
+          count: 1,
+        })
+      }
+      return acc
+    }, [])
 
     return {
       id: user.id,
@@ -89,13 +114,7 @@ export async function getUserData(username) {
       isAdmin: user.isAdmin,
       canClaim: canUserClaim(user.lastClaim),
       nextClaimTime: getTimeUntilNextClaim(user.lastClaim),
-      inventory: inventory.map((item) => ({
-        id: item.id,
-        name: item.name,
-        rarity: item.rarity,
-        sellValue: item.sellValue,
-        icon: item.icon,
-      })),
+      inventory: groupedInventory,
     }
   } catch (error) {
     console.error("Get user data error:", error)
@@ -182,6 +201,11 @@ export async function claimDailyTokens(username) {
 
     const user = users[0]
 
+    // Check if user is banned
+    if (user.isBanned) {
+      return { error: "Your account has been banned. Please contact support." }
+    }
+
     // Check if user can claim
     if (!canUserClaim(user.lastClaim)) {
       return { error: "You've already claimed your daily tokens" }
@@ -226,9 +250,15 @@ export async function claimDailyTokens(username) {
   }
 }
 
-// Open a pack
+// Open a pack - improved with better error handling and transaction safety
 export async function openPack(username, packType) {
   try {
+    // Validate pack type
+    if (packType !== "og") {
+      return { error: "Invalid pack type" }
+    }
+
+    // Get user data first
     const users = await sql`
       SELECT * FROM "User" WHERE username = ${username}
     `
@@ -239,24 +269,35 @@ export async function openPack(username, packType) {
 
     const user = users[0]
 
+    // Check if user is banned
+    if (user.isBanned) {
+      return { error: "Your account has been banned. Please contact support." }
+    }
+
     // Check if user has enough tokens
     if (user.tokens < 25) {
       return { error: "Not enough tokens" }
     }
 
-    // Deduct tokens
-    await sql`
-      UPDATE "User" 
-      SET tokens = ${user.tokens - 25}, "updatedAt" = NOW()
-      WHERE username = ${username}
-    `
+    // Validate cook rarities configuration
+    if (!cookRarities || cookRarities.length === 0) {
+      console.error("Cook rarities configuration is missing or empty")
+      return { error: "Game configuration error. Please try again." }
+    }
 
-    // Determine the cook based on rarity probabilities
-    const rand = Math.random() * 100
+    // Calculate total probability to ensure it's valid
+    const totalProbability = cookRarities.reduce((sum, rarity) => sum + rarity.dropRate, 0)
+    if (totalProbability <= 0) {
+      console.error("Invalid cook rarities probability configuration")
+      return { error: "Game configuration error. Please try again." }
+    }
 
-    let selectedRarity
+    // Generate random number for rarity selection
+    const rand = Math.random() * totalProbability
+    let selectedRarity = null
     let cumulativeProbability = 0
 
+    // Find the selected rarity based on probability
     for (const rarity of cookRarities) {
       cumulativeProbability += rarity.dropRate
       if (rand <= cumulativeProbability) {
@@ -265,28 +306,95 @@ export async function openPack(username, packType) {
       }
     }
 
+    // Fallback to last rarity if none selected (shouldn't happen but safety check)
+    if (!selectedRarity) {
+      selectedRarity = cookRarities[cookRarities.length - 1]
+    }
+
+    // Validate selected rarity has cooks
+    if (!selectedRarity.cooks || selectedRarity.cooks.length === 0) {
+      console.error("Selected rarity has no cooks:", selectedRarity)
+      return { error: "Game configuration error. Please try again." }
+    }
+
     // Select a random cook from the rarity
-    const cookName = selectedRarity.cooks[Math.floor(Math.random() * selectedRarity.cooks.length)]
+    const cookIndex = Math.floor(Math.random() * selectedRarity.cooks.length)
+    const cookName = selectedRarity.cooks[cookIndex]
 
-    // Add cook to user's inventory
+    if (!cookName) {
+      console.error("Failed to select cook name from rarity:", selectedRarity)
+      return { error: "Failed to select cook. Please try again." }
+    }
+
+    // Generate unique cook ID
     const cookId = crypto.randomUUID()
-    await sql`
-      INSERT INTO "Cook" (id, name, rarity, "sellValue", icon, "userId", "createdAt")
-      VALUES (${cookId}, ${cookName}, ${selectedRarity.type}, ${selectedRarity.sellValue}, ${selectedRarity.icon || "👨‍🍳"}, ${user.id}, NOW())
-    `
 
-    return {
-      success: true,
-      id: cookId,
-      name: cookName,
-      rarity: selectedRarity.type,
-      sellValue: selectedRarity.sellValue,
-      icon: selectedRarity.icon || "👨‍🍳",
-      dropRate: selectedRarity.dropRate,
+    // Use a transaction-like approach: deduct tokens first, then add cook
+    // If adding cook fails, we'll need to rollback the token deduction
+    let tokenUpdateResult
+    try {
+      // Deduct tokens first
+      tokenUpdateResult = await sql`
+        UPDATE "User" 
+        SET tokens = ${user.tokens - 25}, "updatedAt" = NOW()
+        WHERE username = ${username} AND tokens >= 25
+        RETURNING tokens
+      `
+
+      // Check if the update actually happened (user still had enough tokens)
+      if (tokenUpdateResult.length === 0) {
+        return { error: "Not enough tokens or user not found" }
+      }
+
+      // Add cook to user's inventory
+      await sql`
+        INSERT INTO "Cook" (id, name, rarity, "sellValue", icon, "userId", "createdAt")
+        VALUES (
+          ${cookId}, 
+          ${cookName}, 
+          ${selectedRarity.type}, 
+          ${selectedRarity.sellValue}, 
+          ${selectedRarity.icon || "👨‍🍳"}, 
+          ${user.id}, 
+          NOW()
+        )
+      `
+
+      // Revalidate relevant paths
+      revalidatePath("/shop")
+      revalidatePath("/inventory")
+
+      return {
+        success: true,
+        id: cookId,
+        name: cookName,
+        rarity: selectedRarity.type,
+        sellValue: selectedRarity.sellValue,
+        icon: selectedRarity.icon || "👨‍🍳",
+        dropRate: selectedRarity.dropRate,
+      }
+    } catch (cookInsertError) {
+      console.error("Failed to insert cook, attempting to rollback tokens:", cookInsertError)
+
+      // Try to rollback the token deduction
+      try {
+        await sql`
+          UPDATE "User" 
+          SET tokens = ${user.tokens}, "updatedAt" = NOW()
+          WHERE username = ${username}
+        `
+        console.log("Successfully rolled back token deduction")
+      } catch (rollbackError) {
+        console.error("Failed to rollback token deduction:", rollbackError)
+        // This is a serious error - user lost tokens but didn't get cook
+        // In production, this should trigger an alert/notification system
+      }
+
+      return { error: "Failed to open pack. Please try again." }
     }
   } catch (error) {
     console.error("Open pack error:", error)
-    return { error: "Failed to open pack" }
+    return { error: "Failed to open pack. Please try again." }
   }
 }
 
@@ -303,6 +411,11 @@ export async function sellCook(username, cookId) {
 
     const user = users[0]
 
+    // Check if user is banned
+    if (user.isBanned) {
+      return { error: "Your account has been banned. Please contact support." }
+    }
+
     const cooks = await sql`
       SELECT * FROM "Cook" WHERE id = ${cookId} AND "userId" = ${user.id}
     `
@@ -313,20 +426,30 @@ export async function sellCook(username, cookId) {
 
     const cook = cooks[0]
 
-    // Add tokens to user and remove cook
-    await sql`
-      UPDATE "User" 
-      SET tokens = ${user.tokens + cook.sellValue}, "updatedAt" = NOW()
-      WHERE username = ${username}
-    `
+    // Add tokens to user and remove cook in a transaction-like manner
+    try {
+      // Add tokens to user
+      await sql`
+        UPDATE "User" 
+        SET tokens = ${user.tokens + cook.sellValue}, "updatedAt" = NOW()
+        WHERE username = ${username}
+      `
 
-    await sql`
-      DELETE FROM "Cook" WHERE id = ${cookId}
-    `
+      // Remove cook from inventory
+      await sql`
+        DELETE FROM "Cook" WHERE id = ${cookId}
+      `
 
-    return {
-      success: true,
-      tokensReceived: cook.sellValue,
+      // Revalidate relevant paths
+      revalidatePath("/inventory")
+
+      return {
+        success: true,
+        tokensReceived: cook.sellValue,
+      }
+    } catch (transactionError) {
+      console.error("Sell cook transaction error:", transactionError)
+      return { error: "Failed to sell cook. Please try again." }
     }
   } catch (error) {
     console.error("Sell cook error:", error)
