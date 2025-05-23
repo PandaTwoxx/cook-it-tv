@@ -141,9 +141,6 @@ export default function AdminPage() {
 
   // Update the handleBanUser function to check if the user is an admin
   const handleBanUser = async (username, isAdmin) => {
-    if (!window.confirm(`Are you sure you want to ban user "${username}"?`)) {
-      return
-    }
 
     // If the user is an admin and current user is not master admin, require master password
     if (isAdmin && !isMasterAdmin) {
