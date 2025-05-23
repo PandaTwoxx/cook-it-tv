@@ -119,8 +119,8 @@ export async function removeAdminAccess(username, masterPassword) {
   }
 }
 
-// Ban a user
-export async function banUser(username) {
+// Update the banUser function to require master password for admin users
+export async function banUser(username, masterPassword = null) {
   try {
     const users = await sql`
       SELECT * FROM "User" WHERE username = ${username}
@@ -128,6 +128,16 @@ export async function banUser(username) {
 
     if (users.length === 0) {
       return { error: "User not found" }
+    }
+
+    const user = users[0]
+
+    // Check if target user is an admin - if so, require master password
+    if (user.isAdmin) {
+      // Verify master password is provided and correct
+      if (!masterPassword || masterPassword !== process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
+        return { error: "Master admin password required to ban admin users" }
+      }
     }
 
     await sql`
@@ -143,8 +153,8 @@ export async function banUser(username) {
   }
 }
 
-// Unban a user
-export async function unbanUser(username) {
+// Update the unbanUser function to require master password for admin users
+export async function unbanUser(username, masterPassword = null) {
   try {
     const users = await sql`
       SELECT * FROM "User" WHERE username = ${username}
@@ -152,6 +162,16 @@ export async function unbanUser(username) {
 
     if (users.length === 0) {
       return { error: "User not found" }
+    }
+
+    const user = users[0]
+
+    // Check if target user is an admin - if so, require master password
+    if (user.isAdmin) {
+      // Verify master password is provided and correct
+      if (!masterPassword || masterPassword !== process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
+        return { error: "Master admin password required to unban admin users" }
+      }
     }
 
     await sql`

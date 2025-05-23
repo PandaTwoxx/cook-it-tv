@@ -139,6 +139,79 @@ export default function AdminPage() {
     }
   }
 
+  // Update the handleBanUser function to check if the user is an admin
+  const handleBanUser = async (username, isAdmin) => {
+    if (!window.confirm(`Are you sure you want to ban user "${username}"?`)) {
+      return
+    }
+
+    // If the user is an admin and current user is not master admin, require master password
+    if (isAdmin && !isMasterAdmin) {
+      setPendingAction({
+        action: banUser,
+        params: username,
+        successMessage: `Successfully banned admin user "${username}"`,
+      })
+      setMasterPasswordDialog(true)
+      return
+    }
+
+    setIsLoading(true)
+    setError("")
+    setSuccess("")
+
+    try {
+      // If current user is master admin, pass the master password directly
+      const result = await banUser(username, isAdmin && isMasterAdmin ? process.env.NEXT_PUBLIC_ADMIN_PASSWORD : null)
+
+      if (result.error) {
+        setError(result.error)
+      } else {
+        setSuccess(`Successfully banned user "${username}"`)
+        await fetchUsers()
+      }
+    } catch (error) {
+      setError("Failed to ban user")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Update the handleUnbanUser function to check if the user is an admin
+  const handleUnbanUser = async (username, isAdmin) => {
+    // If the user is an admin and current user is not master admin, require master password
+    if (isAdmin && !isMasterAdmin) {
+      setPendingAction({
+        action: unbanUser,
+        params: username,
+        successMessage: `Successfully unbanned admin user "${username}"`,
+      })
+      setMasterPasswordDialog(true)
+      return
+    }
+
+    setIsLoading(true)
+    setError("")
+    setSuccess("")
+
+    try {
+      // If current user is master admin, pass the master password directly
+      const result = await unbanUser(username, isAdmin && isMasterAdmin ? process.env.NEXT_PUBLIC_ADMIN_PASSWORD : null)
+
+      if (result.error) {
+        setError(result.error)
+      } else {
+        setSuccess(`Successfully unbanned user "${username}"`)
+        await fetchUsers()
+      }
+    } catch (error) {
+      setError("Failed to unban user")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Update the handleMasterPasswordSubmit function to handle ban/unban actions
   const handleMasterPasswordSubmit = async () => {
     if (!pendingAction) return
 
@@ -147,7 +220,12 @@ export default function AdminPage() {
     setSuccess("")
 
     try {
-      const result = await pendingAction.action(pendingAction.params, masterPassword)
+      // For ban/unban actions, pass the master password as second parameter
+      const result =
+        pendingAction.action.name === "banUser" || pendingAction.action.name === "unbanUser"
+          ? await pendingAction.action(pendingAction.params, masterPassword)
+          : await pendingAction.action(pendingAction.params, masterPassword)
+
       if (result.error) {
         setError(result.error)
       } else {
@@ -308,50 +386,6 @@ export default function AdminPage() {
       }
     } catch (error) {
       setError("Failed to clear messages")
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleBanUser = async (username) => {
-    if (!window.confirm(`Are you sure you want to ban user "${username}"?`)) {
-      return
-    }
-
-    setIsLoading(true)
-    setError("")
-    setSuccess("")
-
-    try {
-      const result = await banUser(username)
-      if (result.error) {
-        setError(result.error)
-      } else {
-        setSuccess(`Successfully banned user "${username}"`)
-        await fetchUsers()
-      }
-    } catch (error) {
-      setError("Failed to ban user")
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleUnbanUser = async (username) => {
-    setIsLoading(true)
-    setError("")
-    setSuccess("")
-
-    try {
-      const result = await unbanUser(username)
-      if (result.error) {
-        setError(result.error)
-      } else {
-        setSuccess(`Successfully unbanned user "${username}"`)
-        await fetchUsers()
-      }
-    } catch (error) {
-      setError("Failed to unban user")
     } finally {
       setIsLoading(false)
     }
@@ -580,7 +614,7 @@ export default function AdminPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handleUnbanUser(user.username)}
+                                onClick={() => handleUnbanUser(user.username, user.isAdmin)}
                                 disabled={isLoading}
                               >
                                 <UserX className="h-4 w-4 mr-1" />
@@ -590,7 +624,7 @@ export default function AdminPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handleBanUser(user.username)}
+                                onClick={() => handleBanUser(user.username, user.isAdmin)}
                                 disabled={isLoading}
                               >
                                 <Ban className="h-4 w-4 mr-1" />
