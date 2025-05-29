@@ -14,7 +14,7 @@ Any changes you make to your deployed app will be automatically pushed to this r
 
 Your project is live at:
 
-**[https://vercel.com/westons-projects-6629f54f/v0-cook-it-game-design](https://vercel.com/westons-projects-6629f54f/v0-cook-it-game-design)**
+**[https://cook-it.warmraisin.com](https://cook-it.warmraisin.com)**
 
 ## Build your app
 
